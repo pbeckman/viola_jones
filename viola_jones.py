@@ -341,7 +341,7 @@ def main(run="test", n=4000):
             fpr = false_positive_rate(all_images, all_labels, h)
             print "    Total false positive rate = {}".format(fpr)
             if fpr == 0:
-                "FALSE POSITIVE RATE IS 0 - ALL NON-FACES REMOVED FROM TRAINING SET"
+                "FALSE POSITIVE RATE IS 0 - ALL NON-FACES FILTERED FROM TRAINING SET"
                 break
 
             # add h to collection of strong classifiers
