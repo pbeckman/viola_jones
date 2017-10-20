@@ -337,7 +337,12 @@ def main(run="test", n=4000):
             # make callable strong classifier
             h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
 
-            print "    Total false positive rate = {}".format(false_positive_rate(all_images, all_labels, h))
+            # calculate false positive rate
+            fpr = false_positive_rate(all_images, all_labels, h)
+            print "    Total false positive rate = {}".format(fpr)
+            if fpr == 0:
+                "FALSE POSITIVE RATE IS 0 - ALL NON-FACES REMOVED FROM TRAINING SET"
+                break
 
             # add h to collection of strong classifiers
             params.append([feature_indices, weights, polarities, thresholds, meta_threshold])
