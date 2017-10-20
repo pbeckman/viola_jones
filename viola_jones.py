@@ -361,8 +361,8 @@ def main(run="test", n=4000):
 
         cv2.imwrite("class_faces.jpg", cv2.cvtColor(test_image, cv2.COLOR_RGB2BGR))
 
-        imgplot = plt.imshow(test_image)
-        plt.show()
+        # imgplot = plt.imshow(test_image)
+        # plt.show()
 
     # compute integral image for each training example
     elif run == "ii":
