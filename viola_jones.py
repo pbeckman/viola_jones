@@ -288,7 +288,7 @@ def main(run="test", n=4000):
     if run == "test":
         print "Generating Haar-like features..."
         features = []
-        stride = 16
+        stride = 2
         # for width in range(4, 65, stride):
         #     for height in range(4, 65, stride):
         for width in [4, 6, 8, 12, 16, 24, 32]: # [4, 8, 16, 32]: #
