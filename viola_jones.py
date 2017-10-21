@@ -75,13 +75,17 @@ class haar_like_feature:
 
 
 def classifier_value(image, feature, polarity, threshold):
-    return np.sign(polarity * (feature.value(image) - threshold))
+    val = np.sign(polarity * (feature.value(image) - threshold))
+
+    return val if val != 0 else 1.0
 
 
 def strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold):
-    return np.sign(
+    s = np.sign(
         strong_classifier_sum(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
     )
+
+    return s if s != 0 else 1.0
 def strong_classifier_sum(image, features, feature_indices, weights, polarities, thresholds, meta_threshold):
     # number of weak classifiers
     T = len(feature_indices)
@@ -287,11 +291,13 @@ def error_rate(images, labels, h):
     m = images.shape[0]
 
     # false positive rate
-    fpr = sum([h(images[i]) == 1 and labels[i] == -1 for i in range(m)]) / float(m)
+    fpr = sum([h(images[i]) == 1 and labels[i] == -1 for i in range(m)]) / float(sum([labels[i] == -1 for i in range(m)]))
     # false negative rate
-    fnr = sum([h(images[i]) == -1 and labels[i] == 1 for i in range(m)]) / float(m)
+    fnr = sum([h(images[i]) == -1 and labels[i] == 1 for i in range(m)]) / float(sum([labels[i] == 1 for i in range(m)]))
+    # total error
+    error = sum([h(images[i]) != labels[i] for i in range(m)]) / float(m)
 
-    return fpr, fnr
+    return fpr, fnr, error
 
 
 def main(run="test", n=4000):
@@ -329,7 +335,7 @@ def main(run="test", n=4000):
         test_image_ii = generate_integral_image(test_image)
 
         # number of features to select in each strong classifier runs
-        Ts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        Ts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] # [3, 5, 8] #
         # strong classifiers from each round of the cascade
         params = []
 
@@ -339,18 +345,23 @@ def main(run="test", n=4000):
             feature_indices, weights, polarities, thresholds = adaboost(images, labels, features, Ts[i])
 
             print "  Determining meta-threshold so there are no false negatives..."
-            meta_threshold = get_meta_threshold(images, labels, features, feature_indices, weights, polarities, thresholds)
+            meta_threshold = 0 # get_meta_threshold(images, labels, features, feature_indices, weights, polarities, thresholds)
             print "\tmeta_threshold = {}".format(meta_threshold)
 
             # make callable strong classifier
             h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
 
             # calculate false positive rate
-            fpr, fnr = error_rate(images, labels, h)
-            print "  False positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, fpr+fnr)
+            fpr, fnr, error = error_rate(images, labels, h)
+            print "  Single false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
 
             # add h to collection of strong classifiers
             params.append([feature_indices, weights, polarities, thresholds, meta_threshold])
+
+            # combined classifier
+            h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
+            fpr, fnr, error = error_rate(all_images, all_labels, h_all)
+            print "Combined false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
 
             if fpr == 0:
                 "FALSE POSITIVE RATE IS 0 - ALL NON-FACES FILTERED FROM TRAINING SET"
@@ -358,13 +369,13 @@ def main(run="test", n=4000):
 
             if i+1 != len(Ts):
                 print "  Filtering out classified non-faces..."
+                num_prev_examples = len(labels)
                 images, labels = filter_negatives(images, labels, h)
                 print "\tnumber of remaining training images = {}".format(images.shape[0])
 
-        # combined classifier
-        h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
-        fpr, fnr = error_rate(all_images, all_labels, h_all)
-        print "Combined - false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, fpr+fnr)
+            if len(labels) == num_prev_examples:
+                "NO EXAMPLES FILTERED - CASCADE NO LONGER SELECTIVE"
+                break
 
         print "Running classifier on test image..."
         # get coordinates of upper left for each classified face
