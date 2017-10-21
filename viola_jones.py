@@ -275,7 +275,7 @@ def filter_negatives(images, labels, h):
     filtered_labels = []
 
     for i in range(m):
-        if h(images[i]) == 1:
+        if h(images[i]) == 1 or labels[i] == 1:
             filtered_images.append(images[i])
             filtered_labels.append(labels[i])
 
