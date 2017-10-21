@@ -196,12 +196,12 @@ def adaboost(images, labels, features, T):
         ])
         # print errors
         # index of best classifier and lowest error
-        c = min(range(N), key=lambda j: errors[j])
+        c = min(range(N), key=lambda j: errors[j] if j not in feature_indices[:t] else np.inf)
         # if this feature has already been used, then we've separated the dataset as much as possible
         # so keep the set of weak classifiers that we currently have without adding more
-        if c in feature_indices[:t]:
-            print "\tPREVIOUSLY SELECTED FEATURE ENCOUNTERED - DATASET MAXIMALLY SEPARATED"
-            break
+        # if c in feature_indices[:t]:
+        #     print "\tPREVIOUSLY SELECTED FEATURE ENCOUNTERED - DATASET MAXIMALLY SEPARATED"
+        #     break
         # base classifier with smallest error
         feature_indices.append(c)
         print "\tfeature index = {}, width = {}, height = {}, ul = ({},{})".format(
@@ -335,7 +335,7 @@ def main(run="test", n=4000):
         test_image_ii = generate_integral_image(test_image)
 
         # number of features to select in each strong classifier runs
-        Ts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] # [3, 5, 8] #
+        Ts = [5, 10, 10, 10, 15, 20] # [3, 5, 8] #
         # strong classifiers from each round of the cascade
         params = []
 
@@ -345,7 +345,7 @@ def main(run="test", n=4000):
             feature_indices, weights, polarities, thresholds = adaboost(images, labels, features, Ts[i])
 
             print "  Determining meta-threshold so there are no false negatives..."
-            meta_threshold = 0 # get_meta_threshold(images, labels, features, feature_indices, weights, polarities, thresholds)
+            meta_threshold = get_meta_threshold(images, labels, features, feature_indices, weights, polarities, thresholds)
             print "\tmeta_threshold = {}".format(meta_threshold)
 
             # make callable strong classifier
@@ -363,18 +363,13 @@ def main(run="test", n=4000):
             fpr, fnr, error = error_rate(all_images, all_labels, h_all)
             print "Combined false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
 
-            if fpr == 0:
-                "FALSE POSITIVE RATE IS 0 - ALL NON-FACES FILTERED FROM TRAINING SET"
-                break
-
             if i+1 != len(Ts):
                 print "  Filtering out classified non-faces..."
-                num_prev_examples = len(labels)
                 images, labels = filter_negatives(images, labels, h)
                 print "\tnumber of remaining training images = {}".format(images.shape[0])
 
-            if len(labels) == num_prev_examples:
-                "NO EXAMPLES FILTERED - CASCADE NO LONGER SELECTIVE"
+            if len(labels) == len(all_labels) / 2:
+                "ALL NON-FACES FILTERED FROM TRAINING SET - CASCADE NO LONGER EFFECTIVE"
                 break
 
         print "Running classifier on test image..."
