@@ -1,5 +1,6 @@
 import sys
 import cv2
+import time
 import numpy as np
 import pickle as pkl
 import matplotlib as mpl
@@ -124,13 +125,13 @@ def polarity_threshold(images, labels, feature, D_t):
     errors = np.empty(m)
     polarities = np.empty(m)
 
-    # positive examples on left side of j
+    # weight of positive examples on left side of j
     L_plus  = 0
-    # megative examples on left side of j
+    # weight of megative examples on left side of j
     L_minus = 0
-    # positive examples on right side of j
+    # weight of positive examples on right side of j
     R_plus  = sum([D_t[sigma[k]]*(labels[sigma[k]] == 1)  for k in range(0, m)])
-    # negative examples on right side of j
+    # weight of negative examples on right side of j
     R_minus = sum([D_t[sigma[k]]*(labels[sigma[k]] == -1) for k in range(0, m)])
 
     for j in range(m):
@@ -175,10 +176,11 @@ def adaboost(images, labels, features, T):
     thresholds = np.empty(N)
 
     for t in range(T):
-        print "    Training weak classifier t = {}".format(t)
+        print "    Training weak classifier {}".format(t+1)
         # find best polarity and threshold for each feature
         print "\tDetermining optimal polarity and threshold for each feature"
         for i in range(N):
+            # print "\t    feature i = {}".format(i)
             polarities[i], thresholds[i] = polarity_threshold(images, labels, features[i], D_t)
 
         print "\tDetermining error for each feature"
@@ -194,11 +196,14 @@ def adaboost(images, labels, features, T):
         # if this feature has already been used, then we've separated the dataset as much as possible
         # so keep the set of weak classifiers that we currently have without adding more
         if c in feature_indices[:t]:
-            print "\tPREVIOUSLY SELECTED FEATURE ENCOUNTERED"
+            print "\tPREVIOUSLY SELECTED FEATURE ENCOUNTERED - DATASET MAXIMALLY SEPARATED"
             break
         # base classifier with smallest error
         feature_indices.append(c)
-        print "\tfeature index = {}".format(c)
+        print "\tfeature index = {}, width = {}, height = {}, ul = ({},{})".format(
+            c,
+            features[c].w, features[c].h,
+            features[c].ul_x, features[c].ul_y)
         # smallest error
         epsilon_t = errors[c]
         # print "\tepsilon_t = {}".format(epsilon_t)
@@ -277,24 +282,27 @@ def filter_negatives(images, labels, h):
     return np.array(filtered_images), np.array(filtered_labels)
 
 
-def false_positive_rate(images, labels, h):
+def error_rate(images, labels, h):
     # number of examples
     m = images.shape[0]
 
-    return sum([h(images[i]) == 1 and labels[i] == -1 for i in range(m)]) / float(m)
+    # false positive rate
+    fpr = sum([h(images[i]) == 1 and labels[i] == -1 for i in range(m)]) / float(m)
+    # false negative rate
+    fnr = sum([h(images[i]) == -1 and labels[i] == 1 for i in range(m)]) / float(m)
+
+    return fpr, fnr
 
 
 def main(run="test", n=4000):
     if run == "test":
         print "Generating Haar-like features..."
         features = []
-        stride = 2
-        # for width in range(4, 65, stride):
-        #     for height in range(4, 65, stride):
-        for width in [4, 6, 8, 12, 16, 24, 32]: # [4, 8, 16, 32]: #
-            for height in [4, 6, 8, 12, 16, 24, 32]: # [4, 8, 16, 32]: #
-                for ul_x in range(0, 64 - width, stride):
-                    for ul_y in range(0, 64 - height, stride):
+        stride = 4
+        for width in [4, 6, 8, 12, 16, 24]:
+            for height in [4, 6, 8, 12, 16, 24]:
+                for ul_x in range(4, 64 - width - 4, stride):
+                    for ul_y in range(4, 64 - height - 4, stride):
                         for orientation in ["vertical", "horizontal"]:
                             features.append(
                                 haar_like_feature(
@@ -338,14 +346,15 @@ def main(run="test", n=4000):
             h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
 
             # calculate false positive rate
-            fpr = false_positive_rate(all_images, all_labels, h)
-            print "    Total false positive rate = {}".format(fpr)
-            if fpr == 0:
-                "FALSE POSITIVE RATE IS 0 - ALL NON-FACES FILTERED FROM TRAINING SET"
-                break
+            fpr, fnr = error_rate(images, labels, h)
+            print "  False positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, fpr+fnr)
 
             # add h to collection of strong classifiers
             params.append([feature_indices, weights, polarities, thresholds, meta_threshold])
+
+            if fpr == 0:
+                "FALSE POSITIVE RATE IS 0 - ALL NON-FACES FILTERED FROM TRAINING SET"
+                break
 
             if i+1 != len(Ts):
                 print "  Filtering out classified non-faces..."
@@ -353,14 +362,15 @@ def main(run="test", n=4000):
                 print "\tnumber of remaining training images = {}".format(images.shape[0])
 
         # combined classifier
-        h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(Ts))]) else -1
-        print "Combined false positive rate = {}".format(false_positive_rate(all_images, all_labels, h_all))
+        h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
+        fpr, fnr = error_rate(all_images, all_labels, h_all)
+        print "Combined - false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, fpr+fnr)
 
-        print "  Running classifier on test image..."
+        print "Running classifier on test image..."
         # get coordinates of upper left for each classified face
         detected = detect_faces(test_image_ii, h_all)
 
-        print "    {} faces detected".format(len(detected))
+        print "  {} faces detected".format(len(detected))
         # display faces
         test_image = write_detections(test_image, detected)
 
