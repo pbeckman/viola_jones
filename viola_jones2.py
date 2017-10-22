@@ -84,7 +84,6 @@ def strong_classifier_value(image, features, feature_indices, weights, polaritie
     s = np.sign(
         strong_classifier_sum(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
     )
-
     return s if s != 0 else 1.0
 def strong_classifier_sum(image, features, feature_indices, weights, polarities, thresholds, meta_threshold):
     # number of weak classifiers
@@ -98,8 +97,6 @@ def strong_classifier_sum(image, features, feature_indices, weights, polarities,
             thresholds[int(feature_indices[t])]
         ) for t in range(T)]
     ) - meta_threshold
-
-    # print s
 
     return s
 
@@ -185,7 +182,7 @@ def adaboost(images, labels, features):
     # weak classifier
     t = 0
 
-    while fpr > 0.9:
+    while fpr > 0.3 and (t < 5 or fpr == 1.0):
         print "    Training weak classifier {}".format(t+1)
         # find best polarity and threshold for each feature
         print "\tDetermining optimal polarity and threshold for each feature"
@@ -276,7 +273,7 @@ def get_meta_threshold(images, labels, features, feature_indices, weights, polar
     #     print "  polarity = {}, threshold = {}".format(polarities[int(feature_indices[t])], thresholds[int(feature_indices[t])])
     #     raw_input()
 
-    return min([strong_classifier_sum(
+    val = min([strong_classifier_sum(
         images[i],
         features,
         feature_indices,
@@ -284,6 +281,8 @@ def get_meta_threshold(images, labels, features, feature_indices, weights, polar
         polarities,
         thresholds,
         0) if labels[i] == 1 else np.inf for i in range(m)])
+
+    return val # + abs(val) * 0.1
 
 
 def filter_negatives(images, labels, h):
@@ -315,13 +314,13 @@ def error_rate(images, labels, h):
     return fpr, fnr, error
 
 
-def main(run="test", n=4000):
+def main(run="test", n=4000, meta_tolerance=0.1, i=1):
     if run == "test":
         print "Generating Haar-like features..."
         features = []
         stride = 4
-        for width in [4, 6, 8, 12, 16, 24]:
-            for height in [4, 6, 8, 12, 16, 24]:
+        for width in [2, 4, 6, 8, 12, 16, 24]:
+            for height in [2, 4, 6, 8, 12, 16, 24]:
                 for ul_x in range(4, 64 - width - 4, stride):
                     for ul_y in range(4, 64 - height - 4, stride):
                         for orientation in ["vertical", "horizontal"]:
@@ -353,12 +352,12 @@ def main(run="test", n=4000):
         params = []
 
         # overall false positive rate
-        fpr = 1.0
+        combined_fpr = 1.0
 
         # cascade round
         i = 1
 
-        while fpr > 0.01:
+        while combined_fpr > 0.0001:
             print "Cascade round {}".format(i)
             print "  Training Adaboost classifier..."
             feature_indices, weights, polarities, thresholds, meta_threshold = adaboost(images, labels, features)
@@ -369,10 +368,14 @@ def main(run="test", n=4000):
             # make callable strong classifier
             h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
 
+            # pickle everything needed to construct combined classifier
+            with open("classifier_round{}.pkl".format(i), "wb") as f:
+                pkl.dump((features, params), f)
+
             # combined classifier
             h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
-            fpr, fnr, error = error_rate(all_images, all_labels, h_all)
-            print "Combined false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
+            combined_fpr, combined_fnr, combined_error = error_rate(all_images, all_labels, h_all)
+            print "  Combined false positive rate = {}, false negative rate = {}, total error = {}".format(combined_fpr, combined_fnr, combined_error)
 
             print "  Filtering out classified non-faces..."
             images, labels = filter_negatives(images, labels, h)
@@ -396,6 +399,43 @@ def main(run="test", n=4000):
 
         # imgplot = plt.imshow(test_image)
         # plt.show()
+
+    elif run == "params":
+        print "Deserializing training integral images..."
+        with open("faces_ii.pkl", "rb") as face_pkl, open("background_ii.pkl", "rb") as bkgd_pkl:
+            all_images = np.concatenate((pkl.load(face_pkl), pkl.load(bkgd_pkl)))
+            all_labels = np.concatenate((np.full(2000, 1), np.full(2000, -1)))
+
+        # open test image and calculate integral image
+        test_image = cv2.imread("class.jpg", 0)
+        test_image_ii = generate_integral_image(test_image)
+
+        # unpickle everything needed to construct combined classifier
+        with open("classifier_round{}.pkl".format(i), "rb") as f:
+            features, params = pkl.load(f)
+
+        # increase meta-tolerance by some fraction of its current value
+        for j in range(len(params)):
+            params[j][4] = params[j][4] + abs(params[j][4]) * meta_tolerance
+
+        # combined classifier
+        h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
+        fpr, fnr, error = error_rate(all_images, all_labels, h_all)
+        print "  Combined false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
+
+        print "Running classifier on test image..."
+        # get coordinates of upper left for each classified face
+        detected = detect_faces(test_image_ii, h_all)
+
+        print "  {} faces detected".format(len(detected))
+        # display faces
+        test_image = write_detections(test_image, detected)
+
+        cv2.imwrite("class_faces_3.jpg", cv2.cvtColor(test_image, cv2.COLOR_RGB2BGR))
+
+        # imgplot = plt.imshow(test_image)
+        # plt.show()
+
 
     # compute integral image for each training example
     elif run == "ii":
@@ -450,7 +490,9 @@ def main(run="test", n=4000):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 3:
+        main(run=sys.argv[1], meta_tolerance=float(sys.argv[2]), i=int(sys.argv[3]))
+    elif len(sys.argv) > 2:
         main(run=sys.argv[1], n=int(sys.argv[2]))
     elif len(sys.argv) > 1:
         main(run=sys.argv[1])
