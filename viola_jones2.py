@@ -182,7 +182,7 @@ def adaboost(images, labels, features):
     # weak classifier
     t = 0
 
-    while fpr > 0.3 and (t < 5 or fpr == 1.0):
+    while fpr > 0.3 and (t < 10 or fpr == 1.0):
         print "    Training weak classifier {}".format(t+1)
         # find best polarity and threshold for each feature
         print "\tDetermining optimal polarity and threshold for each feature"
