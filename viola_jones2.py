@@ -358,7 +358,7 @@ def main(run="test", n=4000):
         # cascade round
         i = 1
 
-        while fpr > 0.01 and i <= 2:
+        while fpr > 0.01:
             print "Cascade round {}".format(i)
             print "  Training Adaboost classifier..."
             feature_indices, weights, polarities, thresholds, meta_threshold = adaboost(images, labels, features)
