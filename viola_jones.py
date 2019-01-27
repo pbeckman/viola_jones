@@ -21,12 +21,6 @@ class haar_like_feature:
         self.o = orientation
 
     def intensity(self, integral_image, ul_x, ul_y, w, h):
-        # print "lr = {}, ul = {}, ur = {}, ll = {}".format(
-        #     integral_image[ul_y + h, ul_x + w],
-        #     integral_image[ul_y,     ul_x    ],
-        #     integral_image[ul_y,     ul_x + w],
-        #     integral_image[ul_y + h, ul_x    ]
-        # )
         return integral_image[ul_y + h, ul_x + w] + \
                integral_image[ul_y,     ul_x    ] - \
                integral_image[ul_y,     ul_x + w] - \
@@ -48,9 +42,6 @@ class haar_like_feature:
                 self.w/2,
                 self.h
                 )
-            # print "ul = ({},{}), width = {}, height = {}".format(self.ul_x, self.ul_y, self.w, self.h)
-            # print "left_intensity = {}".format(left_intensity)
-            # print "right_intensity = {}".format(right_intensity)
             return left_intensity - right_intensity
 
         else:
@@ -68,9 +59,6 @@ class haar_like_feature:
                 self.w,
                 self.h/2
                 )
-            # print "ul = ({},{}), width = {}, height = {}".format(self.ul_x, self.ul_y, self.w, self.h)
-            # print "top_intensity = {}".format(top_intensity)
-            # print "bottom_intensity = {}".format(bottom_intensity)
             return top_intensity - bottom_intensity
 
 
@@ -84,7 +72,6 @@ def strong_classifier_value(image, features, feature_indices, weights, polaritie
     s = np.sign(
         strong_classifier_sum(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
     )
-
     return s if s != 0 else 1.0
 def strong_classifier_sum(image, features, feature_indices, weights, polarities, thresholds, meta_threshold):
     # number of weak classifiers
@@ -98,8 +85,6 @@ def strong_classifier_sum(image, features, feature_indices, weights, polarities,
             thresholds[int(feature_indices[t])]
         ) for t in range(T)]
     ) - meta_threshold
-
-    # print s
 
     return s
 
@@ -157,14 +142,10 @@ def polarity_threshold(images, labels, feature, D_t):
     # set threshold to value of feature
     threshold = feature.value(images[j_optimal])
 
-    # print errors
-    # print "j_optimal = {}, polarity = {}, threshold = {}".format(j_optimal, polarity, threshold)
-    # raw_input()
-
     return polarity, threshold
 
 
-def adaboost(images, labels, features, T):
+def adaboost(images, labels, features):
     # number of training images
     m = images.shape[0]
     # number of features
@@ -179,7 +160,13 @@ def adaboost(images, labels, features, T):
     polarities = np.empty(N)
     thresholds = np.empty(N)
 
-    for t in range(T):
+    # false positive rate
+    fpr = 1.0
+
+    # weak classifier
+    t = 0
+
+    while fpr > 0.4 and (t < 20 or fpr == 1.0):
         print "    Training weak classifier {}".format(t+1)
         # find best polarity and threshold for each feature
         print "\tDetermining optimal polarity and threshold for each feature"
@@ -197,11 +184,6 @@ def adaboost(images, labels, features, T):
         # print errors
         # index of best classifier and lowest error
         c = min(range(N), key=lambda j: errors[j] if j not in feature_indices[:t] else np.inf)
-        # if this feature has already been used, then we've separated the dataset as much as possible
-        # so keep the set of weak classifiers that we currently have without adding more
-        # if c in feature_indices[:t]:
-        #     print "\tPREVIOUSLY SELECTED FEATURE ENCOUNTERED - DATASET MAXIMALLY SEPARATED"
-        #     break
         # base classifier with smallest error
         feature_indices.append(c)
         print "\tfeature index = {}, width = {}, height = {}, ul = ({},{})".format(
@@ -221,7 +203,21 @@ def adaboost(images, labels, features, T):
             D_t[i] * np.exp(-1.0 * weights[t] * labels[i] * classifier_value(images[i], features[c], polarities[j], thresholds[j])) / Z_t for i in range(m)
         ])
 
-    return feature_indices, weights, polarities, thresholds
+        print "\tDetermining meta-threshold so there are no false negatives..."
+        meta_threshold = get_meta_threshold(images, labels, features, feature_indices, weights, polarities, thresholds)
+        print "\t  meta_threshold = {}".format(meta_threshold)
+
+        # make callable strong classifier
+        print "\tConstructing callable strong classifier with indices {}".format(feature_indices)
+        h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
+
+        # calculate error rates
+        fpr, fnr, error = error_rate(images, labels, h)
+        print "\tFalse positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
+
+        t += 1
+
+    return feature_indices, weights, polarities, thresholds, meta_threshold
 
 
 def detect_faces(image, h):
@@ -254,14 +250,7 @@ def get_meta_threshold(images, labels, features, feature_indices, weights, polar
     # number of weak classifiers
     T = len(feature_indices)
 
-    # for t in range(T):
-    #     print "t = {}".format(t)
-    #     print "  weight = {}".format(weights[t])
-    #     print "  feature index = {}".format(int(feature_indices[t]))
-    #     print "  polarity = {}, threshold = {}".format(polarities[int(feature_indices[t])], thresholds[int(feature_indices[t])])
-    #     raw_input()
-
-    return min([strong_classifier_sum(
+    val = min([strong_classifier_sum(
         images[i],
         features,
         feature_indices,
@@ -269,6 +258,8 @@ def get_meta_threshold(images, labels, features, feature_indices, weights, polar
         polarities,
         thresholds,
         0) if labels[i] == 1 else np.inf for i in range(m)])
+
+    return val + abs(val) * 0.01
 
 
 def filter_negatives(images, labels, h):
@@ -300,13 +291,13 @@ def error_rate(images, labels, h):
     return fpr, fnr, error
 
 
-def main(run="test", n=4000):
+def main(run="test", n=4000, meta_tolerance=0.1, i=1):
     if run == "test":
         print "Generating Haar-like features..."
         features = []
         stride = 4
-        for width in [4, 6, 8, 12, 16, 24]:
-            for height in [4, 6, 8, 12, 16, 24]:
+        for width in [2, 4, 6, 8, 12, 16, 24]:
+            for height in [2, 4, 6, 8, 12, 16, 24]:
                 for ul_x in range(4, 64 - width - 4, stride):
                     for ul_y in range(4, 64 - height - 4, stride):
                         for orientation in ["vertical", "horizontal"]:
@@ -334,43 +325,47 @@ def main(run="test", n=4000):
         test_image = cv2.imread("class.jpg", 0)
         test_image_ii = generate_integral_image(test_image)
 
-        # number of features to select in each strong classifier runs
-        Ts = [5, 10, 10, 10, 15, 20] # [3, 5, 8] #
         # strong classifiers from each round of the cascade
         params = []
 
-        for i in range(len(Ts)):
-            print "Cascade round {}".format(i+1)
+        # overall false positive rate
+        combined_fpr = 1.0
+
+        # cascade round
+        i = 1
+
+        while combined_fpr > 0.0001:
+            clock = time.time()
+            print "Cascade round {}".format(i)
             print "  Training Adaboost classifier..."
-            feature_indices, weights, polarities, thresholds = adaboost(images, labels, features, Ts[i])
-
-            print "  Determining meta-threshold so there are no false negatives..."
-            meta_threshold = get_meta_threshold(images, labels, features, feature_indices, weights, polarities, thresholds)
-            print "\tmeta_threshold = {}".format(meta_threshold)
-
-            # make callable strong classifier
-            h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
-
-            # calculate false positive rate
-            fpr, fnr, error = error_rate(images, labels, h)
-            print "  Single false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
+            feature_indices, weights, polarities, thresholds, meta_threshold = adaboost(images, labels, features)
 
             # add h to collection of strong classifiers
             params.append([feature_indices, weights, polarities, thresholds, meta_threshold])
 
+            # make callable strong classifier
+            h = lambda image: strong_classifier_value(image, features, feature_indices, weights, polarities, thresholds, meta_threshold)
+
+            # pickle everything needed to construct combined classifier
+            with open("classifier_round{}.pkl".format(i), "wb") as f:
+                pkl.dump((features, params), f)
+
             # combined classifier
             h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
-            fpr, fnr, error = error_rate(all_images, all_labels, h_all)
-            print "Combined false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
+            combined_fpr, combined_fnr, combined_error = error_rate(all_images, all_labels, h_all)
+            print "  Combined false positive rate = {}, false negative rate = {}, total error = {}".format(combined_fpr, combined_fnr, combined_error)
 
-            if i+1 != len(Ts):
-                print "  Filtering out classified non-faces..."
-                images, labels = filter_negatives(images, labels, h)
-                print "\tnumber of remaining training images = {}".format(images.shape[0])
+            print "  Filtering out classified non-faces..."
+            images, labels = filter_negatives(images, labels, h)
+            print "\tnumber of remaining training images = {}".format(images.shape[0])
+
+            print "  time to train strong classifier = {}".format(time.time() - clock)
 
             if len(labels) == len(all_labels) / 2:
                 "ALL NON-FACES FILTERED FROM TRAINING SET - CASCADE NO LONGER EFFECTIVE"
                 break
+
+            i += 1
 
         print "Running classifier on test image..."
         # get coordinates of upper left for each classified face
@@ -384,6 +379,43 @@ def main(run="test", n=4000):
 
         # imgplot = plt.imshow(test_image)
         # plt.show()
+
+    elif run == "params":
+        print "Deserializing training integral images..."
+        with open("faces_ii.pkl", "rb") as face_pkl, open("background_ii.pkl", "rb") as bkgd_pkl:
+            all_images = np.concatenate((pkl.load(face_pkl), pkl.load(bkgd_pkl)))
+            all_labels = np.concatenate((np.full(2000, 1), np.full(2000, -1)))
+
+        # open test image and calculate integral image
+        test_image = cv2.imread("class.jpg", 0)
+        test_image_ii = generate_integral_image(test_image)
+
+        # unpickle everything needed to construct combined classifier
+        with open("classifier_round{}.pkl".format(i), "rb") as f:
+            features, params = pkl.load(f)
+
+        # increase meta-tolerance by some fraction of its current value
+        for j in range(len(params)):
+            params[j][4] = params[j][4] + abs(params[j][4]) * meta_tolerance
+
+        # combined classifier
+        h_all = lambda image: 1 if all([strong_classifier_value(image, features, *params[i]) == 1 for i in range(len(params))]) else -1
+        fpr, fnr, error = error_rate(all_images, all_labels, h_all)
+        print "  Combined false positive rate = {}, false negative rate = {}, total error = {}".format(fpr, fnr, error)
+
+        print "Running classifier on test image..."
+        # get coordinates of upper left for each classified face
+        detected = detect_faces(test_image_ii, h_all)
+
+        print "  {} faces detected".format(len(detected))
+        # display faces
+        test_image = write_detections(test_image, detected)
+
+        # cv2.imwrite("class_faces_4.jpg", cv2.cvtColor(test_image, cv2.COLOR_RGB2BGR))
+
+        imgplot = plt.imshow(test_image)
+        plt.show()
+
 
     # compute integral image for each training example
     elif run == "ii":
@@ -438,7 +470,9 @@ def main(run="test", n=4000):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2:
+    if len(sys.argv) > 3:
+        main(run=sys.argv[1], meta_tolerance=float(sys.argv[2]), i=int(sys.argv[3]))
+    elif len(sys.argv) > 2:
         main(run=sys.argv[1], n=int(sys.argv[2]))
     elif len(sys.argv) > 1:
         main(run=sys.argv[1])
